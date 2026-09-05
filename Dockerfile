@@ -39,13 +39,7 @@ RUN mkdir -p /app/games /app/screenshots
 # Download game contoh (avatar.jar)
 RUN wget -O /app/games/avatar.jar "https://files.catbox.moe/sllphh.ja"
 
-# Script untuk menjalankan game
-RUN echo '#!/bin/bash\n\
-GAME_FILE=${1:-/app/games/avatar.jar}\n\
-java -jar /app/freej2me/build/libs/freej2me.jar "$GAME_FILE"' > /app/run.sh && \
-chmod +x /app/run.sh
-
-# Buat web server Python untuk control panel
+# Buat web server dengan tombol screenshot dan download
 RUN cat > /app/web_server.py << 'EOF'
 #!/usr/bin/env python3
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -63,10 +57,8 @@ class WebHandler(BaseHTTPRequestHandler):
             self.serve_html()
         elif parsed_path.path == '/screenshot':
             self.take_screenshot()
-        elif parsed_path.path.startswith('/screenshots/'):
-            self.serve_screenshot(parsed_path.path)
-        elif parsed_path.path == '/list_screenshots':
-            self.list_screenshots()
+        elif parsed_path.path.startswith('/download/'):
+            self.download_screenshot(parsed_path.path)
         else:
             self.send_404()
     
@@ -75,226 +67,135 @@ class WebHandler(BaseHTTPRequestHandler):
         <!DOCTYPE html>
         <html>
         <head>
-            <title>J2ME Emulator Control Panel</title>
-            <meta charset="UTF-8">
+            <title>J2ME Emulator</title>
             <style>
-                * { margin: 0; padding: 0; box-sizing: border-box; }
-                body { 
-                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                    min-height: 100vh;
+                body {
+                    margin: 0;
                     padding: 20px;
+                    font-family: Arial, sans-serif;
+                    background: #f0f0f0;
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
                 }
-                .container {
-                    max-width: 1400px;
-                    margin: 0 auto;
-                }
-                h1 {
-                    color: white;
-                    text-align: center;
-                    margin-bottom: 30px;
-                    font-size: 2.5em;
-                    text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
-                }
-                .main-panel {
-                    display: grid;
-                    grid-template-columns: 1fr 1fr;
-                    gap: 20px;
+                .emulator-container {
+                    width: 100%;
+                    max-width: 800px;
                     margin-bottom: 20px;
                 }
-                .panel {
-                    background: white;
-                    border-radius: 15px;
-                    padding: 20px;
-                    box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-                }
-                .panel h2 {
-                    color: #333;
-                    margin-bottom: 15px;
-                    border-bottom: 2px solid #667eea;
-                    padding-bottom: 10px;
-                }
-                .emulator-view {
+                iframe {
                     width: 100%;
                     height: 600px;
-                    border: none;
+                    border: 2px solid #333;
                     border-radius: 10px;
-                    background: #000;
+                }
+                .controls {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    gap: 10px;
                 }
                 .screenshot-btn {
-                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    background: #4CAF50;
                     color: white;
                     border: none;
                     padding: 15px 30px;
-                    font-size: 1.2em;
+                    font-size: 18px;
                     border-radius: 10px;
                     cursor: pointer;
-                    transition: all 0.3s;
-                    width: 100%;
-                    margin-bottom: 20px;
-                    font-weight: bold;
+                    transition: background 0.3s;
                 }
                 .screenshot-btn:hover {
-                    transform: translateY(-2px);
-                    box-shadow: 0 5px 15px rgba(0,0,0,0.3);
-                }
-                .screenshot-btn:active {
-                    transform: translateY(0);
-                }
-                .screenshots-grid {
-                    display: grid;
-                    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-                    gap: 15px;
-                    max-height: 500px;
-                    overflow-y: auto;
-                }
-                .screenshot-item {
-                    position: relative;
-                    border: 1px solid #ddd;
-                    border-radius: 8px;
-                    overflow: hidden;
-                    transition: all 0.3s;
-                    cursor: pointer;
-                }
-                .screenshot-item:hover {
-                    transform: scale(1.05);
-                    box-shadow: 0 5px 15px rgba(0,0,0,0.3);
-                }
-                .screenshot-item img {
-                    width: 100%;
-                    height: auto;
-                    display: block;
-                }
-                .screenshot-item .filename {
-                    position: absolute;
-                    bottom: 0;
-                    left: 0;
-                    right: 0;
-                    background: rgba(0,0,0,0.7);
-                    color: white;
-                    padding: 5px;
-                    font-size: 0.8em;
-                    text-align: center;
-                }
-                .loading {
-                    display: none;
-                    text-align: center;
-                    padding: 20px;
-                    color: #667eea;
-                    font-weight: bold;
+                    background: #45a049;
                 }
                 .notification {
                     display: none;
-                    position: fixed;
-                    top: 20px;
-                    right: 20px;
                     background: #4CAF50;
                     color: white;
-                    padding: 15px 20px;
+                    padding: 10px 20px;
                     border-radius: 5px;
-                    box-shadow: 0 3px 10px rgba(0,0,0,0.2);
-                    animation: slideIn 0.5s;
-                    z-index: 1000;
                 }
-                @keyframes slideIn {
-                    from { transform: translateX(100%); opacity: 0; }
-                    to { transform: translateX(0); opacity: 1; }
-                }
-                .empty-state {
+                .download-section {
+                    display: none;
+                    background: white;
+                    padding: 15px;
+                    border-radius: 10px;
+                    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
                     text-align: center;
-                    color: #999;
-                    padding: 40px;
-                    font-style: italic;
+                }
+                .download-link {
+                    display: inline-block;
+                    background: #2196F3;
+                    color: white;
+                    padding: 10px 20px;
+                    border-radius: 5px;
+                    text-decoration: none;
+                    margin-top: 10px;
+                    font-weight: bold;
+                }
+                .download-link:hover {
+                    background: #0b7dda;
+                }
+                .screenshot-preview {
+                    max-width: 300px;
+                    margin-top: 10px;
+                    border: 1px solid #ddd;
+                    border-radius: 5px;
                 }
             </style>
         </head>
         <body>
-            <div class="container">
-                <h1>🎮 J2ME Emulator Control Panel</h1>
-                
-                <div class="main-panel">
-                    <div class="panel">
-                        <h2>📱 Emulator View</h2>
-                        <iframe class="emulator-view" src="http://localhost:6080/vnc.html"></iframe>
-                    </div>
-                    
-                    <div class="panel">
-                        <h2>📸 Screenshot Control</h2>
-                        <button class="screenshot-btn" onclick="takeScreenshot()">
-                            📸 Take Screenshot
-                        </button>
-                        <div class="loading" id="loading">Taking screenshot...</div>
-                        <div id="screenshots" class="screenshots-grid">
-                            <div class="empty-state">No screenshots yet. Click the button above!</div>
-                        </div>
-                    </div>
+            <div class="emulator-container">
+                <iframe src="http://localhost:6080/vnc.html"></iframe>
+            </div>
+            <div class="controls">
+                <button class="screenshot-btn" onclick="takeScreenshot()">
+                    📸 Screenshot
+                </button>
+                <div class="notification" id="notification">✅ Screenshot berhasil!</div>
+                <div class="download-section" id="downloadSection">
+                    <h3>Hasil Screenshot:</h3>
+                    <img class="screenshot-preview" id="screenshotPreview" alt="Screenshot">
+                    <br>
+                    <a class="download-link" id="downloadLink" href="#" download>
+                        💾 Download Screenshot
+                    </a>
                 </div>
             </div>
             
-            <div class="notification" id="notification">✅ Screenshot saved!</div>
-            
             <script>
                 function takeScreenshot() {
-                    const loading = document.getElementById('loading');
-                    loading.style.display = 'block';
-                    
                     fetch('/screenshot')
                         .then(response => response.json())
                         .then(data => {
-                            loading.style.display = 'none';
                             if (data.status === 'success') {
-                                showNotification();
-                                loadScreenshots();
+                                // Tampilkan notifikasi
+                                const notification = document.getElementById('notification');
+                                notification.style.display = 'block';
+                                setTimeout(() => {
+                                    notification.style.display = 'none';
+                                }, 2000);
+                                
+                                // Tampilkan section download
+                                const downloadSection = document.getElementById('downloadSection');
+                                downloadSection.style.display = 'block';
+                                
+                                // Set preview dan link download
+                                const preview = document.getElementById('screenshotPreview');
+                                preview.src = data.url;
+                                
+                                const downloadLink = document.getElementById('downloadLink');
+                                downloadLink.href = data.download_url;
+                                downloadLink.download = data.filename;
                             } else {
-                                alert('Failed to take screenshot');
+                                alert('Gagal mengambil screenshot');
                             }
                         })
                         .catch(error => {
-                            loading.style.display = 'none';
                             console.error('Error:', error);
-                            alert('Error taking screenshot');
+                            alert('Error mengambil screenshot');
                         });
                 }
-                
-                function loadScreenshots() {
-                    fetch('/list_screenshots')
-                        .then(response => response.json())
-                        .then(data => {
-                            const container = document.getElementById('screenshots');
-                            
-                            if (data.screenshots.length === 0) {
-                                container.innerHTML = '<div class="empty-state">No screenshots yet. Click the button above!</div>';
-                                return;
-                            }
-                            
-                            container.innerHTML = '';
-                            
-                            data.screenshots.forEach(screenshot => {
-                                const item = document.createElement('div');
-                                item.className = 'screenshot-item';
-                                item.onclick = () => window.open(screenshot.url, '_blank');
-                                item.innerHTML = `
-                                    <img src="${screenshot.url}" alt="${screenshot.name}">
-                                    <div class="filename">${screenshot.name}</div>
-                                `;
-                                container.appendChild(item);
-                            });
-                        });
-                }
-                
-                function showNotification() {
-                    const notification = document.getElementById('notification');
-                    notification.style.display = 'block';
-                    setTimeout(() => {
-                        notification.style.display = 'none';
-                    }, 3000);
-                }
-                
-                // Load screenshots on page load
-                loadScreenshots();
-                
-                // Refresh screenshots every 30 seconds
-                setInterval(loadScreenshots, 30000);
             </script>
         </body>
         </html>
@@ -321,8 +222,9 @@ class WebHandler(BaseHTTPRequestHandler):
             if result.returncode == 0:
                 response_data = {
                     'status': 'success',
-                    'file': filename,
-                    'url': f'/screenshots/{filename}'
+                    'filename': filename,
+                    'url': f'/download/{filename}',
+                    'download_url': f'/download/{filename}'
                 }
                 self.send_response(200)
             else:
@@ -340,37 +242,23 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_response(500)
         
         self.send_header('Content-type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
         self.wfile.write(json.dumps(response_data).encode())
     
-    def serve_screenshot(self, path):
+    def download_screenshot(self, path):
         filename = os.path.basename(path)
         filepath = f'/app/screenshots/{filename}'
         
         if os.path.exists(filepath):
             self.send_response(200)
             self.send_header('Content-type', 'image/png')
+            self.send_header('Content-Disposition', f'attachment; filename="{filename}"')
             self.end_headers()
             with open(filepath, 'rb') as f:
                 self.wfile.write(f.read())
         else:
             self.send_404()
-    
-    def list_screenshots(self):
-        screenshots = []
-        if os.path.exists('/app/screenshots'):
-            files = sorted(os.listdir('/app/screenshots'), reverse=True)
-            for file in files:
-                if file.endswith('.png'):
-                    screenshots.append({
-                        'name': file,
-                        'url': f'/screenshots/{file}'
-                    })
-        
-        self.send_response(200)
-        self.send_header('Content-type', 'application/json')
-        self.end_headers()
-        self.wfile.write(json.dumps({'screenshots': screenshots}).encode())
     
     def send_404(self):
         self.send_response(404)
@@ -384,7 +272,6 @@ if __name__ == '__main__':
     server.serve_forever()
 EOF
 
-# Set permission untuk web server
 RUN chmod +x /app/web_server.py
 
 # Konfigurasi supervisor
@@ -409,7 +296,7 @@ command=websockify --web=/usr/share/novnc/ 6080 localhost:5900\n\
 priority=4\n\
 \n\
 [program:j2me]\n\
-command=/app/run.sh\n\
+command=java -jar -noverify /app/freej2me/build/libs/freej2me.jar /app/games/avatar.jar\n\
 environment=DISPLAY=:99\n\
 priority=5\n\
 \n\
@@ -421,8 +308,6 @@ autorestart=true' > /etc/supervisor/conf.d/j2me.conf
 # Expose ports
 EXPOSE 6080 8080
 
-# Set working directory
 WORKDIR /app
 
-# Jalankan supervisor
 CMD ["/usr/bin/supervisord"]
