@@ -1,5 +1,9 @@
 FROM ubuntu:22.04
 
+# Set environment untuk non-interactive installation
+ENV DEBIAN_FRONTEND=noninteractive \
+    TZ=Etc/UTC
+
 # Install dependencies
 RUN apt-get update && apt-get install -y \
     openjdk-11-jdk \
@@ -14,6 +18,7 @@ RUN apt-get update && apt-get install -y \
     supervisor \
     imagemagick \
     python3 \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -379,7 +384,7 @@ if __name__ == '__main__':
     server.serve_forever()
 EOF
 
-# FIX: Tambahkan RUN sebelum chmod
+# Set permission untuk web server
 RUN chmod +x /app/web_server.py
 
 # Konfigurasi supervisor
