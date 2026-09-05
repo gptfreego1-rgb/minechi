@@ -100,16 +100,24 @@ RUN mkdir -p /root/wallpaper \
     -O /root/wallpaper/bg.png \
     https://raw.githubusercontent.com/gptfreego1-rgb/k/refs/heads/main/file_000000005cac81fa9d4eaed1715e5291.png
 
-# FreeJ2ME launcher - FIX: removed -noverify (deprecated in Java 13+)
+# FreeJ2ME launcher - FIX: proper parameter passing
 RUN cat >/usr/local/bin/freej2me <<'EOF'
 #!/bin/sh
+if [ -z "$1" ]; then
+    GAME="/opt/freej2me/games/avatar.jar"
+else
+    GAME="$1"
+fi
+
+echo "Starting FreeJ2ME with: $GAME"
+
 exec java \
 -Xms16m \
 -Xmx64m \
 -XX:+UseSerialGC \
 -XX:MaxRAM=64m \
 -jar /opt/freej2me/freej2me.jar \
-/opt/freej2me/games/avatar.jar
+"$GAME"
 EOF
 
 RUN chmod +x /usr/local/bin/freej2me
@@ -558,9 +566,9 @@ RUN cat >/root/.jwmrc <<'EOF'
 </JWM>
 EOF
 
-# Startup Script
+# Startup Script - FIX: better error handling and logging
 RUN cat >/startup.sh <<'EOF'
-#!/bin/sh
+#!/bin/bash
 
 export DISPLAY=:1
 
@@ -596,9 +604,16 @@ x11vnc \
 # Start Screenshot Server
 screenshot-server &
 
-# Auto-start FreeJ2ME
-sleep 3
-freej2me &
+# Check if FreeJ2ME files exist
+sleep 5
+if [ -f /opt/freej2me/freej2me.jar ]; then
+    echo "Starting FreeJ2ME..."
+    freej2me &
+else
+    echo "WARNING: freej2me.jar not found!"
+    echo "Contents of /opt/freej2me:"
+    ls -la /opt/freej2me/
+fi
 
 wait $!
 EOF
