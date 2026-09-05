@@ -1,12 +1,13 @@
-FROM alpine:latest
+FROM ubuntu:22.04
 
-ENV DISPLAY=:1 \
+ENV DEBIAN_FRONTEND=noninteractive \
+    DISPLAY=:1 \
     HOME=/root
 
-# Install dependencies and Ant manually
-RUN apk add --no-cache \
-    openjdk17-jre \
-    openjdk17-jdk \
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    openjdk-17-jre \
+    openjdk-17-jdk \
     firefox \
     xvfb \
     x11vnc \
@@ -15,24 +16,17 @@ RUN apk add --no-cache \
     wget \
     unzip \
     bash \
-    ttf-dejavu \
+    fonts-dejavu \
     fontconfig \
     xterm \
-    mesa-dri-gallium \
+    mesa-utils \
     git \
+    ant \
     imagemagick \
     python3 \
-    py3-pip \
-    && rm -rf /var/cache/apk/*
-
-# Install Ant manually
-RUN wget -q https://dlcdn.apache.org//ant/binaries/apache-ant-1.10.14-bin.zip \
-    && unzip -q apache-ant-1.10.14-bin.zip -d /opt \
-    && mv /opt/apache-ant-1.10.14 /opt/ant \
-    && rm apache-ant-1.10.14-bin.zip \
-    && ln -s /opt/ant/bin/ant /usr/local/bin/ant \
-    && chmod +x /usr/local/bin/ant \
-    && ant -version
+    python3-pip \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 # Clone dan build FreeJ2ME dengan Ant
 RUN mkdir -p /opt/freej2me \
@@ -614,7 +608,7 @@ RUN chmod +x /startup.sh
 
 # Cleanup
 RUN rm -rf \
-    /var/cache/apk/* \
+    /var/lib/apt/lists/* \
     /tmp/* \
     /root/.cache
 
