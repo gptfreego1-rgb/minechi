@@ -20,7 +20,8 @@ RUN apk add --no-cache \
     mesa-dri-gallium \
     python3 \
     py3-pip \
-    imagemagick
+    imagemagick \
+    xdotool
 
 # Download MicroEmulator
 RUN mkdir -p /opt/microemulator \
@@ -39,35 +40,45 @@ RUN mkdir -p /root/wallpaper \
     -O /root/wallpaper/bg.png \
     https://raw.githubusercontent.com/gptfreego1-rgb/k/refs/heads/main/file_000000005cac81fa9d4eaed1715e5291.png
 
-# MicroEmulator launcher
+# MicroEmulator launcher dengan window title
 RUN cat >/usr/local/bin/microemu <<'EOF'
 #!/bin/sh
 exec java \
 -noverify \
 -Xms16m \
--Xmx64m \
+-Xmx400m \
 -XX:+UseSerialGC \
--XX:MaxRAM=500m \
+-XX:MaxRAM=400m \
 -jar /opt/microemulator/microemulator-2.0.4/microemulator.jar \
 /opt/microemulator/avatar.jar
 EOF
 
 RUN chmod +x /usr/local/bin/microemu
 
-# Screenshot script - HD Quality
+# Screenshot script - hanya MicroEmulator
 RUN cat >/usr/local/bin/screenshot <<'EOF'
 #!/bin/sh
 mkdir -p /root/screenshots
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 FILENAME="/root/screenshots/screenshot_${TIMESTAMP}.png"
 
-# Screenshot dengan kualitas tinggi
-DISPLAY=:1 import -window root -quality 100 -density 300 "$FILENAME"
+# Tunggu sebentar agar window stabil
+sleep 1
 
-# Optimasi PNG untuk ukuran lebih kecil tanpa kehilangan kualitas
+# Cari window MicroEmulator
+WINDOW_ID=$(DISPLAY=:1 xdotool search --name "MicroEmulator" 2>/dev/null | head -1)
+
+if [ -z "$WINDOW_ID" ]; then
+    echo "ERROR: MicroEmulator window not found!"
+    echo "Mencoba screenshot full window saja..."
+    DISPLAY=:1 import -window root -quality 100 "$FILENAME"
+else
+    echo "Found MicroEmulator window ID: $WINDOW_ID"
+    # Screenshot hanya window MicroEmulator
+    DISPLAY=:1 import -window "$WINDOW_ID" -quality 100 "$FILENAME"
+fi
+
 if [ -f "$FILENAME" ]; then
-    # Resize ke 2x untuk HD jika diinginkan
-    # convert "$FILENAME" -resize 200% "$FILENAME"
     echo "Screenshot saved: $FILENAME"
     echo "File size: $(du -h "$FILENAME" | cut -f1)"
 else
@@ -77,19 +88,33 @@ EOF
 
 RUN chmod +x /usr/local/bin/screenshot
 
-# Screenshot HD dengan resize otomatis
+# Screenshot HD - hanya MicroEmulator dengan resize
 RUN cat >/usr/local/bin/screenshot-hd <<'EOF'
 #!/bin/sh
 mkdir -p /root/screenshots
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 FILENAME="/root/screenshots/screenshot_hd_${TIMESTAMP}.png"
+TEMP_FILE="/tmp/temp_screenshot_${TIMESTAMP}.png"
 
-# Ambil screenshot dengan resolusi tinggi
-DISPLAY=:1 import -window root -quality 100 "$FILENAME"
+# Tunggu sebentar
+sleep 1
 
-# Upscale ke 2x untuk HD (1280x960 dari 640x480)
-if [ -f "$FILENAME" ]; then
-    convert "$FILENAME" -resize 200% -quality 100 "$FILENAME"
+# Cari window MicroEmulator
+WINDOW_ID=$(DISPLAY=:1 xdotool search --name "MicroEmulator" 2>/dev/null | head -1)
+
+if [ -z "$WINDOW_ID" ]; then
+    echo "ERROR: MicroEmulator window not found!"
+    echo "Mencoba screenshot full window saja..."
+    DISPLAY=:1 import -window root -quality 100 "$TEMP_FILE"
+else
+    echo "Found MicroEmulator window ID: $WINDOW_ID"
+    DISPLAY=:1 import -window "$WINDOW_ID" -quality 100 "$TEMP_FILE"
+fi
+
+if [ -f "$TEMP_FILE" ]; then
+    # Resize ke 2x untuk HD
+    convert "$TEMP_FILE" -resize 200% -quality 100 "$FILENAME"
+    rm -f "$TEMP_FILE"
     echo "HD Screenshot saved: $FILENAME"
     echo "File size: $(du -h "$FILENAME" | cut -f1)"
 else
@@ -99,7 +124,42 @@ EOF
 
 RUN chmod +x /usr/local/bin/screenshot-hd
 
-# Web server untuk screenshot dan download - dengan preview HD
+# Screenshot crop otomatis (crop border)
+RUN cat >/usr/local/bin/screenshot-crop <<'EOF'
+#!/bin/sh
+mkdir -p /root/screenshots
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+FILENAME="/root/screenshots/screenshot_crop_${TIMESTAMP}.png"
+TEMP_FILE="/tmp/temp_screenshot_${TIMESTAMP}.png"
+
+sleep 1
+
+WINDOW_ID=$(DISPLAY=:1 xdotool search --name "MicroEmulator" 2>/dev/null | head -1)
+
+if [ -z "$WINDOW_ID" ]; then
+    echo "ERROR: MicroEmulator window not found!"
+    exit 1
+fi
+
+echo "Found MicroEmulator window ID: $WINDOW_ID"
+
+# Ambil screenshot window
+DISPLAY=:1 import -window "$WINDOW_ID" -quality 100 "$TEMP_FILE"
+
+if [ -f "$TEMP_FILE" ]; then
+    # Crop border (hilangkan 5px dari setiap sisi)
+    convert "$TEMP_FILE" -shave 5x5 -quality 100 "$FILENAME"
+    rm -f "$TEMP_FILE"
+    echo "Cropped screenshot saved: $FILENAME"
+    echo "File size: $(du -h "$FILENAME" | cut -f1)"
+else
+    echo "ERROR: Screenshot failed!"
+fi
+EOF
+
+RUN chmod +x /usr/local/bin/screenshot-crop
+
+# Web server untuk screenshot
 RUN cat >/usr/local/bin/screenshot-server <<'EOF'
 #!/usr/bin/env python3
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -116,9 +176,11 @@ class ScreenshotHandler(BaseHTTPRequestHandler):
         if parsed_path.path == '/':
             self.serve_html()
         elif parsed_path.path == '/screenshot':
-            self.take_screenshot()
+            self.take_screenshot('normal')
         elif parsed_path.path == '/screenshot-hd':
-            self.take_screenshot_hd()
+            self.take_screenshot('hd')
+        elif parsed_path.path == '/screenshot-crop':
+            self.take_screenshot('crop')
         elif parsed_path.path.startswith('/download/'):
             self.download_screenshot(parsed_path.path)
         elif parsed_path.path == '/list':
@@ -131,7 +193,7 @@ class ScreenshotHandler(BaseHTTPRequestHandler):
         <!DOCTYPE html>
         <html>
         <head>
-            <title>J2ME Screenshot HD</title>
+            <title>J2ME Screenshot</title>
             <meta charset="UTF-8">
             <style>
                 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -162,14 +224,16 @@ class ScreenshotHandler(BaseHTTPRequestHandler):
                     display: flex;
                     gap: 10px;
                     margin-bottom: 20px;
+                    flex-wrap: wrap;
                 }
                 .screenshot-btn {
                     flex: 1;
+                    min-width: 120px;
                     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                     color: white;
                     border: none;
                     padding: 15px 20px;
-                    font-size: 1.1em;
+                    font-size: 1em;
                     border-radius: 10px;
                     cursor: pointer;
                     transition: all 0.3s;
@@ -184,6 +248,9 @@ class ScreenshotHandler(BaseHTTPRequestHandler):
                 }
                 .screenshot-btn.hd {
                     background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+                }
+                .screenshot-btn.crop {
+                    background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
                 }
                 .notification {
                     display: none;
@@ -270,30 +337,28 @@ class ScreenshotHandler(BaseHTTPRequestHandler):
                 }
                 .badge {
                     display: inline-block;
-                    background: #f5576c;
-                    color: white;
                     padding: 2px 8px;
                     border-radius: 10px;
                     font-size: 0.6em;
                     margin-left: 5px;
                 }
-                @media (max-width: 600px) {
-                    .btn-group {
-                        flex-direction: column;
-                    }
-                }
+                .badge.hd { background: #f5576c; color: white; }
+                .badge.crop { background: #4facfe; color: white; }
             </style>
         </head>
         <body>
             <div class="container">
-                <h1>📸 J2ME Screenshot Manager <span style="font-size:0.5em;">HD</span></h1>
+                <h1>📸 MicroEmulator Screenshot</h1>
                 <div class="panel">
                     <div class="btn-group">
                         <button class="screenshot-btn" onclick="takeScreenshot('normal')">
                             📸 Screenshot
                         </button>
                         <button class="screenshot-btn hd" onclick="takeScreenshot('hd')">
-                            📸 HD Screenshot <span style="font-size:0.7em;">(2x)</span>
+                            📸 HD <span style="font-size:0.7em;">(2x)</span>
+                        </button>
+                        <button class="screenshot-btn crop" onclick="takeScreenshot('crop')">
+                            ✂️ Crop Border
                         </button>
                     </div>
                     <div class="notification" id="notification">✅ Screenshot berhasil diambil!</div>
@@ -315,8 +380,12 @@ class ScreenshotHandler(BaseHTTPRequestHandler):
             
             <script>
                 function takeScreenshot(type) {
-                    const url = type === 'hd' ? '/screenshot-hd' : '/screenshot';
-                    fetch(url)
+                    const urls = {
+                        'normal': '/screenshot',
+                        'hd': '/screenshot-hd',
+                        'crop': '/screenshot-crop'
+                    };
+                    fetch(urls[type])
                         .then(response => response.json())
                         .then(data => {
                             if (data.status === 'success') {
@@ -337,7 +406,8 @@ class ScreenshotHandler(BaseHTTPRequestHandler):
                                 downloadLink.download = data.filename;
                                 
                                 const fileInfo = document.getElementById('fileInfo');
-                                fileInfo.textContent = type.toUpperCase() + ' - ' + data.filename + ' (' + data.size + ')';
+                                const typeNames = {'normal': 'Normal', 'hd': 'HD', 'crop': 'Cropped'};
+                                fileInfo.textContent = typeNames[type] + ' - ' + data.filename + ' (' + data.size + ')';
                                 
                                 loadHistory();
                             } else {
@@ -360,8 +430,12 @@ class ScreenshotHandler(BaseHTTPRequestHandler):
                             data.screenshots.forEach(screenshot => {
                                 const item = document.createElement('div');
                                 item.className = 'screenshot-item';
-                                const isHd = screenshot.name.includes('hd');
-                                const badge = isHd ? '<span class="badge">HD</span>' : '';
+                                let badge = '';
+                                if (screenshot.name.includes('hd')) {
+                                    badge = '<span class="badge hd">HD</span>';
+                                } else if (screenshot.name.includes('crop')) {
+                                    badge = '<span class="badge crop">Crop</span>';
+                                }
                                 item.innerHTML = `
                                     <a href="${screenshot.download_url}" download="${screenshot.name}">
                                         <img src="${screenshot.url}" alt="${screenshot.name}">
@@ -385,65 +459,57 @@ class ScreenshotHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(html.encode())
     
-    def take_screenshot(self):
-        return self._take_screenshot('normal')
-    
-    def take_screenshot_hd(self):
-        return self._take_screenshot('hd')
-    
-    def _take_screenshot(self, mode):
+    def take_screenshot(self, mode):
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        suffix = '_hd' if mode == 'hd' else ''
+        suffix = ''
+        if mode == 'hd':
+            suffix = '_hd'
+        elif mode == 'crop':
+            suffix = '_crop'
         filename = f'screenshot{suffix}_{timestamp}.png'
         filepath = f'/root/screenshots/{filename}'
         
         os.makedirs('/root/screenshots', exist_ok=True)
         
         try:
+            # Panggil script bash yang sesuai
             if mode == 'hd':
-                # HD: Ambil screenshot lalu resize ke 2x
-                temp_file = f'/tmp/temp_screenshot_{timestamp}.png'
-                result = subprocess.run(
-                    ['import', '-window', 'root', '-quality', '100', temp_file],
-                    env={**os.environ, 'DISPLAY': ':1'},
-                    capture_output=True,
-                    timeout=10
-                )
-                if result.returncode == 0 and os.path.exists(temp_file):
-                    # Resize ke 2x untuk HD
-                    subprocess.run(
-                        ['convert', temp_file, '-resize', '200%', '-quality', '100', filepath],
-                        capture_output=True,
-                        timeout=10
-                    )
-                    os.remove(temp_file)
-                else:
-                    return self._error_response('Failed to capture screenshot')
+                script = '/usr/local/bin/screenshot-hd'
+            elif mode == 'crop':
+                script = '/usr/local/bin/screenshot-crop'
             else:
-                # Normal
-                result = subprocess.run(
-                    ['import', '-window', 'root', '-quality', '100', filepath],
-                    env={**os.environ, 'DISPLAY': ':1'},
-                    capture_output=True,
-                    timeout=10
-                )
-                if result.returncode != 0:
-                    return self._error_response('Failed to capture screenshot')
+                script = '/usr/local/bin/screenshot'
             
-            if os.path.exists(filepath):
-                file_size = os.path.getsize(filepath)
-                size_str = self._format_size(file_size)
-                
-                response_data = {
-                    'status': 'success',
-                    'filename': filename,
-                    'url': f'/download/{filename}',
-                    'download_url': f'/download/{filename}',
-                    'size': size_str
-                }
-                self.send_response(200)
+            result = subprocess.run(
+                [script],
+                capture_output=True,
+                timeout=15
+            )
+            
+            # Cari file screenshot terbaru
+            if os.path.exists('/root/screenshots'):
+                files = sorted([f for f in os.listdir('/root/screenshots') if f.endswith('.png')], reverse=True)
+                if files:
+                    latest = files[0]
+                    latest_path = f'/root/screenshots/{latest}'
+                    if os.path.exists(latest_path):
+                        file_size = os.path.getsize(latest_path)
+                        size_str = self._format_size(file_size)
+                        
+                        response_data = {
+                            'status': 'success',
+                            'filename': latest,
+                            'url': f'/download/{latest}',
+                            'download_url': f'/download/{latest}',
+                            'size': size_str
+                        }
+                        self.send_response(200)
+                    else:
+                        return self._error_response('File not found')
+                else:
+                    return self._error_response('No screenshot created')
             else:
-                return self._error_response('File not created')
+                return self._error_response('Screenshots directory not found')
                 
         except Exception as e:
             return self._error_response(str(e))
@@ -514,7 +580,7 @@ class ScreenshotHandler(BaseHTTPRequestHandler):
 if __name__ == '__main__':
     os.makedirs('/root/screenshots', exist_ok=True)
     server = HTTPServer(('0.0.0.0', 8080), ScreenshotHandler)
-    print('Screenshot HD server running on port 8080')
+    print('MicroEmulator Screenshot server running on port 8080')
     server.serve_forever()
 EOF
 
@@ -582,12 +648,16 @@ RUN cat >/root/.jwmrc <<'EOF'
         xterm
     </Program>
 
-    <Program label="Take Screenshot">
+    <Program label="Screenshot">
         screenshot
     </Program>
 
-    <Program label="Take Screenshot HD">
+    <Program label="Screenshot HD">
         screenshot-hd
+    </Program>
+
+    <Program label="Screenshot Crop">
+        screenshot-crop
     </Program>
 
     <Program label="Change VNC Password">
@@ -629,7 +699,7 @@ RUN cat >/root/.jwmrc <<'EOF'
 </JWM>
 EOF
 
-# Startup Script - dengan resolusi lebih tinggi
+# Startup Script
 RUN cat >/startup.sh <<'EOF'
 #!/bin/sh
 
@@ -647,7 +717,7 @@ fi
 rm -f /tmp/.X1-lock
 rm -rf /tmp/.X11-unix/X1
 
-# Start X server dengan resolusi lebih tinggi untuk HD
+# Start X server
 Xvfb :1 -screen 0 1024x768x24 &
 sleep 2
 
