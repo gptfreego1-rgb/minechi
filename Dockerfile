@@ -6,6 +6,7 @@ ENV DISPLAY=:1 \
 # Install packages
 RUN apk add --no-cache \
     openjdk17-jre \
+    openjdk17-jdk \
     firefox \
     xvfb \
     x11vnc \
@@ -22,13 +23,52 @@ RUN apk add --no-cache \
     gradle \
     imagemagick \
     python3 \
-    py3-pip
+    py3-pip \
+    && rm -rf /var/cache/apk/*
 
 # Clone dan build FreeJ2ME
 RUN mkdir -p /opt/freej2me \
     && cd /opt/freej2me \
-    && git clone https://github.com/hex007/freej2me.git . \
-    && gradle build \
+    && git clone --depth 1 https://github.com/hex007/freej2me.git . \
+    && ls -la \
+    && echo "=== Struktur repository ===" \
+    && find . -name "build.gradle" -o -name "pom.xml" -o -name "gradlew" | head -20
+
+# Build dengan pengecekan struktur
+RUN cd /opt/freej2me \
+    && if [ -f "gradlew" ]; then \
+         echo "Menggunakan gradlew"; \
+         chmod +x gradlew; \
+         ./gradlew build || ./gradlew jar || ./gradlew assemble; \
+       elif [ -f "build.gradle" ]; then \
+         echo "Menggunakan gradle"; \
+         gradle build || gradle jar || gradle assemble; \
+       elif [ -d "freej2me" ]; then \
+         echo "Masuk ke subdirectory freej2me"; \
+         cd freej2me; \
+         if [ -f "gradlew" ]; then \
+           chmod +x gradlew; \
+           ./gradlew build || ./gradlew jar || ./gradlew assemble; \
+         else \
+           gradle build || gradle jar || gradle assemble; \
+         fi; \
+       else \
+         echo "ERROR: Tidak menemukan build script"; \
+         echo "Struktur lengkap:"; \
+         find . -maxdepth 2 -type f | sort; \
+         exit 1; \
+       fi \
+    && echo "=== Hasil build ===" \
+    && find . -name "*.jar" -type f | grep -v gradle
+
+# Cari dan copy jar hasil build
+RUN cd /opt/freej2me \
+    && JAR_FILE=$(find . -name "*.jar" -type f | grep -i "freej2me\|microemulator\|emulator" | head -1) \
+    && if [ -z "$JAR_FILE" ]; then \
+         JAR_FILE=$(find . -name "*.jar" -type f | grep -v "gradle\|sources\|javadoc" | head -1); \
+       fi \
+    && echo "JAR file yang digunakan: $JAR_FILE" \
+    && cp "$JAR_FILE" /opt/freej2me/freej2me.jar \
     && mkdir -p /opt/freej2me/games
 
 # Download Avatar
@@ -50,7 +90,7 @@ exec java \
 -Xmx64m \
 -XX:+UseSerialGC \
 -XX:MaxRAM=64m \
--jar /opt/freej2me/build/libs/freej2me.jar \
+-jar /opt/freej2me/freej2me.jar \
 /opt/freej2me/games/avatar.jar
 EOF
 
@@ -248,18 +288,15 @@ class ScreenshotHandler(BaseHTTPRequestHandler):
                         .then(response => response.json())
                         .then(data => {
                             if (data.status === 'success') {
-                                // Tampilkan notifikasi
                                 const notification = document.getElementById('notification');
                                 notification.style.display = 'block';
                                 setTimeout(() => {
                                     notification.style.display = 'none';
                                 }, 3000);
                                 
-                                // Tampilkan section download
                                 const downloadSection = document.getElementById('downloadSection');
                                 downloadSection.style.display = 'block';
                                 
-                                // Set preview dan link download
                                 const preview = document.getElementById('screenshotPreview');
                                 preview.src = data.url;
                                 
@@ -267,7 +304,6 @@ class ScreenshotHandler(BaseHTTPRequestHandler):
                                 downloadLink.href = data.download_url;
                                 downloadLink.download = data.filename;
                                 
-                                // Refresh history
                                 loadHistory();
                             } else {
                                 alert('Gagal mengambil screenshot');
@@ -300,7 +336,6 @@ class ScreenshotHandler(BaseHTTPRequestHandler):
                         });
                 }
                 
-                // Load history on page load
                 loadHistory();
             </script>
         </body>
@@ -317,7 +352,6 @@ class ScreenshotHandler(BaseHTTPRequestHandler):
         filename = f'screenshot_{timestamp}.png'
         filepath = f'/root/screenshots/{filename}'
         
-        # Pastikan folder ada
         os.makedirs('/root/screenshots', exist_ok=True)
         
         try:
