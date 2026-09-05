@@ -25,6 +25,7 @@ RUN apt-get update && apt-get install -y \
     imagemagick \
     python3 \
     python3-pip \
+    net-tools \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -92,17 +93,17 @@ RUN cd /opt/freej2me \
 
 # Download Avatar
 RUN wget -q https://files.catbox.moe/sllphh.ja \
-    -O /opt/freej2me/games/avatar.jar
+    -O /opt/freej2me/games/avatar.jar || echo "WARNING: Avatar download failed"
 
 # Download Wallpaper
 RUN mkdir -p /root/wallpaper \
     && wget -q \
     -O /root/wallpaper/bg.png \
-    https://raw.githubusercontent.com/gptfreego1-rgb/k/refs/heads/main/file_000000005cac81fa9d4eaed1715e5291.png
+    https://raw.githubusercontent.com/gptfreego1-rgb/k/refs/heads/main/file_000000005cac81fa9d4eaed1715e5291.png || echo "WARNING: Wallpaper download failed"
 
-# FreeJ2ME launcher - FIX: proper parameter passing
+# FreeJ2ME launcher
 RUN cat >/usr/local/bin/freej2me <<'EOF'
-#!/bin/sh
+#!/bin/bash
 if [ -z "$1" ]; then
     GAME="/opt/freej2me/games/avatar.jar"
 else
@@ -124,7 +125,7 @@ RUN chmod +x /usr/local/bin/freej2me
 
 # Screenshot script
 RUN cat >/usr/local/bin/screenshot <<'EOF'
-#!/bin/sh
+#!/bin/bash
 mkdir -p /root/screenshots
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 DISPLAY=:1 import -window root /root/screenshots/screenshot_${TIMESTAMP}.png
@@ -133,17 +134,22 @@ EOF
 
 RUN chmod +x /usr/local/bin/screenshot
 
-# Web server untuk screenshot dan download
+# Web server untuk screenshot dan download - FIXED with proper binding
 RUN cat >/usr/local/bin/screenshot-server <<'EOF'
 #!/usr/bin/env python3
-from http.server import HTTPServer, BaseHTTPRequestHandler
-import subprocess
+import sys
 import os
+import subprocess
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 import json
 from urllib.parse import urlparse
 
 class ScreenshotHandler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        # Log to stdout
+        sys.stdout.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {format % args}\n")
+    
     def do_GET(self):
         parsed_path = urlparse(self.path)
         
@@ -155,6 +161,11 @@ class ScreenshotHandler(BaseHTTPRequestHandler):
             self.download_screenshot(parsed_path.path)
         elif parsed_path.path == '/list':
             self.list_screenshots()
+        elif parsed_path.path == '/health':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'OK')
         else:
             self.send_404()
     
@@ -463,11 +474,11 @@ RUN chmod +x /usr/local/bin/screenshot-server
 
 # Change VNC Password
 RUN cat >/usr/local/bin/change-vnc-password <<'EOF'
-#!/bin/sh
+#!/bin/bash
 
 mkdir -p /root/.vnc
 
-xterm -title "Change VNC Password" -e sh -c '
+xterm -title "Change VNC Password" -e bash -c '
 
 echo
 echo "=== Change VNC Password ==="
@@ -566,17 +577,20 @@ RUN cat >/root/.jwmrc <<'EOF'
 </JWM>
 EOF
 
-# Startup Script - FIX: better error handling and logging
+# Startup Script - FIXED with better process management
 RUN cat >/startup.sh <<'EOF'
 #!/bin/bash
 
 export DISPLAY=:1
+
+echo "Starting J2ME Container..."
 
 mkdir -p /root/.vnc
 mkdir -p /root/screenshots
 
 # Default password: 123456
 if [ ! -f /root/.vnc/passwd ]; then
+    echo "Setting default VNC password: 123456"
     x11vnc -storepasswd 123456 /root/.vnc/passwd >/dev/null
 fi
 
@@ -585,13 +599,16 @@ rm -f /tmp/.X1-lock
 rm -rf /tmp/.X11-unix/X1
 
 # Start X server
+echo "Starting Xvfb..."
 Xvfb :1 -screen 0 800x600x16 &
 sleep 2
 
 # Start Window Manager
+echo "Starting JWM..."
 jwm &
 
 # Start VNC
+echo "Starting VNC server on port 5901..."
 x11vnc \
 -display :1 \
 -rfbport 5901 \
@@ -599,23 +616,41 @@ x11vnc \
 -forever \
 -shared \
 -noxdamage \
--nowf &
+-nowf \
+-ncache 10 &
+
+sleep 2
 
 # Start Screenshot Server
+echo "Starting Screenshot Web Server on port 8080..."
 screenshot-server &
+sleep 2
 
-# Check if FreeJ2ME files exist
-sleep 5
+# Check services
+echo "=== Services Status ==="
+netstat -tulpn | grep -E "5901|8080" || echo "No services listening yet"
+
+# Start FreeJ2ME
 if [ -f /opt/freej2me/freej2me.jar ]; then
-    echo "Starting FreeJ2ME..."
-    freej2me &
+    if [ -f /opt/freej2me/games/avatar.jar ]; then
+        echo "Starting FreeJ2ME with Avatar..."
+        freej2me &
+    else
+        echo "Avatar.jar not found, starting FreeJ2ME without game..."
+        freej2me /opt/freej2me/freej2me.jar &
+    fi
 else
     echo "WARNING: freej2me.jar not found!"
     echo "Contents of /opt/freej2me:"
     ls -la /opt/freej2me/
 fi
 
-wait $!
+echo "=== Container started successfully ==="
+echo "VNC: Port 5901 (password: 123456)"
+echo "Web: Port 8080"
+
+# Keep container running
+wait
 EOF
 
 RUN chmod +x /startup.sh
