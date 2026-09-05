@@ -3,7 +3,7 @@ FROM alpine:latest
 ENV DISPLAY=:1 \
     HOME=/root
 
-# Install packages - FIX: ant is not available in Alpine, use apk-ant instead
+# Install dependencies and Ant manually
 RUN apk add --no-cache \
     openjdk17-jre \
     openjdk17-jdk \
@@ -20,11 +20,19 @@ RUN apk add --no-cache \
     xterm \
     mesa-dri-gallium \
     git \
-    apk-ant \
     imagemagick \
     python3 \
     py3-pip \
     && rm -rf /var/cache/apk/*
+
+# Install Ant manually
+RUN wget -q https://dlcdn.apache.org//ant/binaries/apache-ant-1.10.14-bin.zip \
+    && unzip -q apache-ant-1.10.14-bin.zip -d /opt \
+    && mv /opt/apache-ant-1.10.14 /opt/ant \
+    && rm apache-ant-1.10.14-bin.zip \
+    && ln -s /opt/ant/bin/ant /usr/local/bin/ant \
+    && chmod +x /usr/local/bin/ant \
+    && ant -version
 
 # Clone dan build FreeJ2ME dengan Ant
 RUN mkdir -p /opt/freej2me \
