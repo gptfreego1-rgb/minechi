@@ -379,7 +379,8 @@ if __name__ == '__main__':
     server.serve_forever()
 EOF
 
-chmod +x /app/web_server.py
+# FIX: Tambahkan RUN sebelum chmod
+RUN chmod +x /app/web_server.py
 
 # Konfigurasi supervisor
 RUN echo '[supervisord]\n\
