@@ -1,13 +1,11 @@
-FROM ubuntu:22.04
+FROM alpine:latest
 
-ENV DEBIAN_FRONTEND=noninteractive \
-    DISPLAY=:1 \
+ENV DISPLAY=:1 \
     HOME=/root
 
-# Install dependencies
-RUN apt-get update && apt-get install -y \
-    openjdk-17-jre \
-    openjdk-17-jdk \
+# Install packages
+RUN apk add --no-cache \
+    openjdk17-jre \
     firefox \
     xvfb \
     x11vnc \
@@ -16,116 +14,49 @@ RUN apt-get update && apt-get install -y \
     wget \
     unzip \
     bash \
-    fonts-dejavu \
+    ttf-dejavu \
     fontconfig \
     xterm \
-    mesa-utils \
-    git \
-    ant \
-    imagemagick \
+    mesa-dri-gallium \
     python3 \
-    python3-pip \
-    net-tools \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    py3-pip \
+    imagemagick
 
-# Clone dan build FreeJ2ME dengan Ant
-RUN mkdir -p /opt/freej2me \
-    && cd /opt/freej2me \
-    && git clone --depth 1 https://github.com/hex007/freej2me.git . \
-    && echo "=== Struktur repository ===" \
-    && ls -la \
-    && echo "=== Mencari build script ===" \
-    && find . -maxdepth 2 -name "build.xml" -o -name "build.gradle" -o -name "pom.xml" -o -name "gradlew" | sort
-
-# Build dengan Ant
-RUN cd /opt/freej2me \
-    && if [ -f "build.xml" ]; then \
-         echo "=== Menemukan build.xml, build dengan Ant ==="; \
-         ant build || ant jar || ant compile || ant; \
-       elif [ -f "build.gradle" ]; then \
-         echo "=== Menemukan build.gradle, build dengan Gradle ==="; \
-         gradle build || gradle jar || gradle assemble; \
-       elif [ -f "pom.xml" ]; then \
-         echo "=== Menemukan pom.xml, build dengan Maven ==="; \
-         mvn package || mvn compile; \
-       elif [ -d "freej2me" ]; then \
-         echo "=== Masuk ke subdirectory freej2me ==="; \
-         cd freej2me; \
-         if [ -f "build.xml" ]; then \
-           ant build || ant jar || ant compile || ant; \
-         elif [ -f "build.gradle" ]; then \
-           gradle build || gradle jar || gradle assemble; \
-         else \
-           echo "ERROR: Tidak menemukan build script di subdirectory"; \
-           find . -maxdepth 2 -type f | sort; \
-           exit 1; \
-         fi; \
-       else \
-         echo "ERROR: Tidak menemukan build script"; \
-         echo "Struktur lengkap:"; \
-         find . -maxdepth 2 -type f | sort; \
-         exit 1; \
-       fi \
-    && echo "=== Hasil build ===" \
-    && find . -name "*.jar" -type f | grep -v "ant\|gradle\|maven"
-
-# Cari dan copy jar hasil build
-RUN cd /opt/freej2me \
-    && echo "=== Mencari JAR file ===" \
-    && find . -name "*.jar" -type f | sort \
-    && JAR_FILE=$(find . -name "*.jar" -type f | grep -i "freej2me\|microemulator\|emulator" | head -1) \
-    && if [ -z "$JAR_FILE" ]; then \
-         JAR_FILE=$(find . -name "*.jar" -type f | grep -v "ant\|gradle\|maven\|sources\|javadoc\|lib" | head -1); \
-       fi \
-    && if [ -z "$JAR_FILE" ]; then \
-         JAR_FILE=$(find . -name "*.jar" -type f | head -1); \
-       fi \
-    && echo "JAR file yang digunakan: $JAR_FILE" \
-    && if [ -n "$JAR_FILE" ]; then \
-         cp "$JAR_FILE" /opt/freej2me/freej2me.jar; \
-       else \
-         echo "ERROR: Tidak menemukan file JAR hasil build"; \
-         exit 1; \
-       fi \
-    && mkdir -p /opt/freej2me/games \
-    && ls -la /opt/freej2me/freej2me.jar
+# Download MicroEmulator
+RUN mkdir -p /opt/microemulator \
+    && wget -q https://storage.googleapis.com/google-code-archive-downloads/v2/code.google.com/microemu/microemulator-2.0.4.zip \
+       -O /tmp/microemulator.zip \
+    && unzip -q /tmp/microemulator.zip -d /opt/microemulator \
+    && rm -f /tmp/microemulator.zip
 
 # Download Avatar
 RUN wget -q https://files.catbox.moe/sllphh.ja \
-    -O /opt/freej2me/games/avatar.jar || echo "WARNING: Avatar download failed"
+    -O /opt/microemulator/avatar.jar
 
 # Download Wallpaper
 RUN mkdir -p /root/wallpaper \
     && wget -q \
     -O /root/wallpaper/bg.png \
-    https://raw.githubusercontent.com/gptfreego1-rgb/k/refs/heads/main/file_000000005cac81fa9d4eaed1715e5291.png || echo "WARNING: Wallpaper download failed"
+    https://raw.githubusercontent.com/gptfreego1-rgb/k/refs/heads/main/file_000000005cac81fa9d4eaed1715e5291.png
 
-# FreeJ2ME launcher
-RUN cat >/usr/local/bin/freej2me <<'EOF'
-#!/bin/bash
-if [ -z "$1" ]; then
-    GAME="/opt/freej2me/games/avatar.jar"
-else
-    GAME="$1"
-fi
-
-echo "Starting FreeJ2ME with: $GAME"
-
+# MicroEmulator launcher
+RUN cat >/usr/local/bin/microemu <<'EOF'
+#!/bin/sh
 exec java \
+-noverify \
 -Xms16m \
 -Xmx64m \
 -XX:+UseSerialGC \
 -XX:MaxRAM=64m \
--jar /opt/freej2me/freej2me.jar \
-"$GAME"
+-jar /opt/microemulator/microemulator-2.0.4/microemulator.jar \
+/opt/microemulator/avatar.jar
 EOF
 
-RUN chmod +x /usr/local/bin/freej2me
+RUN chmod +x /usr/local/bin/microemu
 
 # Screenshot script
 RUN cat >/usr/local/bin/screenshot <<'EOF'
-#!/bin/bash
+#!/bin/sh
 mkdir -p /root/screenshots
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 DISPLAY=:1 import -window root /root/screenshots/screenshot_${TIMESTAMP}.png
@@ -134,22 +65,17 @@ EOF
 
 RUN chmod +x /usr/local/bin/screenshot
 
-# Web server untuk screenshot dan download - FIXED with proper binding
+# Web server untuk screenshot dan download
 RUN cat >/usr/local/bin/screenshot-server <<'EOF'
 #!/usr/bin/env python3
-import sys
-import os
-import subprocess
 from http.server import HTTPServer, BaseHTTPRequestHandler
+import subprocess
+import os
 from datetime import datetime
 import json
 from urllib.parse import urlparse
 
 class ScreenshotHandler(BaseHTTPRequestHandler):
-    def log_message(self, format, *args):
-        # Log to stdout
-        sys.stdout.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {format % args}\n")
-    
     def do_GET(self):
         parsed_path = urlparse(self.path)
         
@@ -161,11 +87,6 @@ class ScreenshotHandler(BaseHTTPRequestHandler):
             self.download_screenshot(parsed_path.path)
         elif parsed_path.path == '/list':
             self.list_screenshots()
-        elif parsed_path.path == '/health':
-            self.send_response(200)
-            self.send_header('Content-type', 'text/plain')
-            self.end_headers()
-            self.wfile.write(b'OK')
         else:
             self.send_404()
     
@@ -474,11 +395,11 @@ RUN chmod +x /usr/local/bin/screenshot-server
 
 # Change VNC Password
 RUN cat >/usr/local/bin/change-vnc-password <<'EOF'
-#!/bin/bash
+#!/bin/sh
 
 mkdir -p /root/.vnc
 
-xterm -title "Change VNC Password" -e bash -c '
+xterm -title "Change VNC Password" -e sh -c '
 
 echo
 echo "=== Change VNC Password ==="
@@ -526,8 +447,8 @@ RUN cat >/root/.jwmrc <<'EOF'
         firefox
     </Program>
 
-    <Program label="FreeJ2ME">
-        freej2me
+    <Program label="MicroEmulator">
+        microemu
     </Program>
 
     <Program label="Terminal">
@@ -558,8 +479,8 @@ RUN cat >/root/.jwmrc <<'EOF'
         exec:firefox
     </TrayButton>
 
-    <TrayButton label="FreeJ2ME">
-        exec:freej2me
+    <TrayButton label="MicroEmulator">
+        exec:microemu
     </TrayButton>
 
     <TrayButton label="Screenshot">
@@ -577,20 +498,17 @@ RUN cat >/root/.jwmrc <<'EOF'
 </JWM>
 EOF
 
-# Startup Script - FIXED with better process management
+# Startup Script
 RUN cat >/startup.sh <<'EOF'
-#!/bin/bash
+#!/bin/sh
 
 export DISPLAY=:1
-
-echo "Starting J2ME Container..."
 
 mkdir -p /root/.vnc
 mkdir -p /root/screenshots
 
 # Default password: 123456
 if [ ! -f /root/.vnc/passwd ]; then
-    echo "Setting default VNC password: 123456"
     x11vnc -storepasswd 123456 /root/.vnc/passwd >/dev/null
 fi
 
@@ -599,16 +517,13 @@ rm -f /tmp/.X1-lock
 rm -rf /tmp/.X11-unix/X1
 
 # Start X server
-echo "Starting Xvfb..."
 Xvfb :1 -screen 0 800x600x16 &
 sleep 2
 
 # Start Window Manager
-echo "Starting JWM..."
 jwm &
 
 # Start VNC
-echo "Starting VNC server on port 5901..."
 x11vnc \
 -display :1 \
 -rfbport 5901 \
@@ -616,52 +531,22 @@ x11vnc \
 -forever \
 -shared \
 -noxdamage \
--nowf \
--ncache 10 &
-
-sleep 2
+-nowf &
 
 # Start Screenshot Server
-echo "Starting Screenshot Web Server on port 8080..."
 screenshot-server &
-sleep 2
 
-# Check services
-echo "=== Services Status ==="
-netstat -tulpn | grep -E "5901|8080" || echo "No services listening yet"
-
-# Start FreeJ2ME
-if [ -f /opt/freej2me/freej2me.jar ]; then
-    if [ -f /opt/freej2me/games/avatar.jar ]; then
-        echo "Starting FreeJ2ME with Avatar..."
-        freej2me &
-    else
-        echo "Avatar.jar not found, starting FreeJ2ME without game..."
-        freej2me /opt/freej2me/freej2me.jar &
-    fi
-else
-    echo "WARNING: freej2me.jar not found!"
-    echo "Contents of /opt/freej2me:"
-    ls -la /opt/freej2me/
-fi
-
-echo "=== Container started successfully ==="
-echo "VNC: Port 5901 (password: 123456)"
-echo "Web: Port 8080"
-
-# Keep container running
-wait
+wait $!
 EOF
 
 RUN chmod +x /startup.sh
 
 # Cleanup
 RUN rm -rf \
-    /var/lib/apt/lists/* \
+    /var/cache/apk/* \
     /tmp/* \
     /root/.cache
 
-# Expose ports
 EXPOSE 5901 8080
 
 WORKDIR /root
