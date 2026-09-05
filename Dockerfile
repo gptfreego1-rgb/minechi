@@ -100,11 +100,10 @@ RUN mkdir -p /root/wallpaper \
     -O /root/wallpaper/bg.png \
     https://raw.githubusercontent.com/gptfreego1-rgb/k/refs/heads/main/file_000000005cac81fa9d4eaed1715e5291.png
 
-# FreeJ2ME launcher
+# FreeJ2ME launcher - FIX: removed -noverify (deprecated in Java 13+)
 RUN cat >/usr/local/bin/freej2me <<'EOF'
 #!/bin/sh
 exec java \
--noverify \
 -Xms16m \
 -Xmx64m \
 -XX:+UseSerialGC \
