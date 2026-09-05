@@ -47,25 +47,59 @@ exec java \
 -Xms16m \
 -Xmx64m \
 -XX:+UseSerialGC \
--XX:MaxRAM=64m \
+-XX:MaxRAM=500m \
 -jar /opt/microemulator/microemulator-2.0.4/microemulator.jar \
 /opt/microemulator/avatar.jar
 EOF
 
 RUN chmod +x /usr/local/bin/microemu
 
-# Screenshot script
+# Screenshot script - HD Quality
 RUN cat >/usr/local/bin/screenshot <<'EOF'
 #!/bin/sh
 mkdir -p /root/screenshots
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-DISPLAY=:1 import -window root /root/screenshots/screenshot_${TIMESTAMP}.png
-echo "Screenshot saved: /root/screenshots/screenshot_${TIMESTAMP}.png"
+FILENAME="/root/screenshots/screenshot_${TIMESTAMP}.png"
+
+# Screenshot dengan kualitas tinggi
+DISPLAY=:1 import -window root -quality 100 -density 300 "$FILENAME"
+
+# Optimasi PNG untuk ukuran lebih kecil tanpa kehilangan kualitas
+if [ -f "$FILENAME" ]; then
+    # Resize ke 2x untuk HD jika diinginkan
+    # convert "$FILENAME" -resize 200% "$FILENAME"
+    echo "Screenshot saved: $FILENAME"
+    echo "File size: $(du -h "$FILENAME" | cut -f1)"
+else
+    echo "ERROR: Screenshot failed!"
+fi
 EOF
 
 RUN chmod +x /usr/local/bin/screenshot
 
-# Web server untuk screenshot dan download
+# Screenshot HD dengan resize otomatis
+RUN cat >/usr/local/bin/screenshot-hd <<'EOF'
+#!/bin/sh
+mkdir -p /root/screenshots
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+FILENAME="/root/screenshots/screenshot_hd_${TIMESTAMP}.png"
+
+# Ambil screenshot dengan resolusi tinggi
+DISPLAY=:1 import -window root -quality 100 "$FILENAME"
+
+# Upscale ke 2x untuk HD (1280x960 dari 640x480)
+if [ -f "$FILENAME" ]; then
+    convert "$FILENAME" -resize 200% -quality 100 "$FILENAME"
+    echo "HD Screenshot saved: $FILENAME"
+    echo "File size: $(du -h "$FILENAME" | cut -f1)"
+else
+    echo "ERROR: Screenshot failed!"
+fi
+EOF
+
+RUN chmod +x /usr/local/bin/screenshot-hd
+
+# Web server untuk screenshot dan download - dengan preview HD
 RUN cat >/usr/local/bin/screenshot-server <<'EOF'
 #!/usr/bin/env python3
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -83,6 +117,8 @@ class ScreenshotHandler(BaseHTTPRequestHandler):
             self.serve_html()
         elif parsed_path.path == '/screenshot':
             self.take_screenshot()
+        elif parsed_path.path == '/screenshot-hd':
+            self.take_screenshot_hd()
         elif parsed_path.path.startswith('/download/'):
             self.download_screenshot(parsed_path.path)
         elif parsed_path.path == '/list':
@@ -95,7 +131,7 @@ class ScreenshotHandler(BaseHTTPRequestHandler):
         <!DOCTYPE html>
         <html>
         <head>
-            <title>J2ME Screenshot</title>
+            <title>J2ME Screenshot HD</title>
             <meta charset="UTF-8">
             <style>
                 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -106,7 +142,7 @@ class ScreenshotHandler(BaseHTTPRequestHandler):
                     padding: 20px;
                 }
                 .container {
-                    max-width: 800px;
+                    max-width: 900px;
                     margin: 0 auto;
                 }
                 h1 {
@@ -122,17 +158,21 @@ class ScreenshotHandler(BaseHTTPRequestHandler):
                     padding: 30px;
                     box-shadow: 0 10px 30px rgba(0,0,0,0.2);
                 }
+                .btn-group {
+                    display: flex;
+                    gap: 10px;
+                    margin-bottom: 20px;
+                }
                 .screenshot-btn {
+                    flex: 1;
                     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                     color: white;
                     border: none;
-                    padding: 15px 30px;
-                    font-size: 1.2em;
+                    padding: 15px 20px;
+                    font-size: 1.1em;
                     border-radius: 10px;
                     cursor: pointer;
                     transition: all 0.3s;
-                    width: 100%;
-                    margin-bottom: 20px;
                     font-weight: bold;
                 }
                 .screenshot-btn:hover {
@@ -141,6 +181,9 @@ class ScreenshotHandler(BaseHTTPRequestHandler):
                 }
                 .screenshot-btn:active {
                     transform: translateY(0);
+                }
+                .screenshot-btn.hd {
+                    background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
                 }
                 .notification {
                     display: none;
@@ -165,6 +208,7 @@ class ScreenshotHandler(BaseHTTPRequestHandler):
                     border: 2px solid #ddd;
                     border-radius: 10px;
                     margin-bottom: 15px;
+                    box-shadow: 0 5px 15px rgba(0,0,0,0.1);
                 }
                 .download-link {
                     display: inline-block;
@@ -190,7 +234,7 @@ class ScreenshotHandler(BaseHTTPRequestHandler):
                 }
                 .screenshots-grid {
                     display: grid;
-                    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+                    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
                     gap: 15px;
                 }
                 .screenshot-item {
@@ -198,6 +242,7 @@ class ScreenshotHandler(BaseHTTPRequestHandler):
                     border-radius: 8px;
                     overflow: hidden;
                     transition: all 0.3s;
+                    background: white;
                 }
                 .screenshot-item:hover {
                     transform: scale(1.05);
@@ -209,21 +254,48 @@ class ScreenshotHandler(BaseHTTPRequestHandler):
                     display: block;
                 }
                 .screenshot-item .filename {
-                    background: rgba(0,0,0,0.7);
+                    background: rgba(0,0,0,0.8);
                     color: white;
-                    padding: 5px;
+                    padding: 8px;
                     font-size: 0.7em;
                     text-align: center;
+                    word-break: break-all;
+                }
+                .screenshot-item .fileinfo {
+                    background: #f5f5f5;
+                    padding: 5px;
+                    font-size: 0.6em;
+                    text-align: center;
+                    color: #666;
+                }
+                .badge {
+                    display: inline-block;
+                    background: #f5576c;
+                    color: white;
+                    padding: 2px 8px;
+                    border-radius: 10px;
+                    font-size: 0.6em;
+                    margin-left: 5px;
+                }
+                @media (max-width: 600px) {
+                    .btn-group {
+                        flex-direction: column;
+                    }
                 }
             </style>
         </head>
         <body>
             <div class="container">
-                <h1>📸 J2ME Screenshot Manager</h1>
+                <h1>📸 J2ME Screenshot Manager <span style="font-size:0.5em;">HD</span></h1>
                 <div class="panel">
-                    <button class="screenshot-btn" onclick="takeScreenshot()">
-                        📸 Take Screenshot
-                    </button>
+                    <div class="btn-group">
+                        <button class="screenshot-btn" onclick="takeScreenshot('normal')">
+                            📸 Screenshot
+                        </button>
+                        <button class="screenshot-btn hd" onclick="takeScreenshot('hd')">
+                            📸 HD Screenshot <span style="font-size:0.7em;">(2x)</span>
+                        </button>
+                    </div>
                     <div class="notification" id="notification">✅ Screenshot berhasil diambil!</div>
                     <div class="download-section" id="downloadSection">
                         <h3>Hasil Screenshot:</h3>
@@ -232,6 +304,7 @@ class ScreenshotHandler(BaseHTTPRequestHandler):
                         <a class="download-link" id="downloadLink" href="#" download>
                             💾 Download Screenshot
                         </a>
+                        <p style="margin-top:10px;color:#666;font-size:0.8em;" id="fileInfo"></p>
                     </div>
                 </div>
                 <div class="history-section">
@@ -241,8 +314,9 @@ class ScreenshotHandler(BaseHTTPRequestHandler):
             </div>
             
             <script>
-                function takeScreenshot() {
-                    fetch('/screenshot')
+                function takeScreenshot(type) {
+                    const url = type === 'hd' ? '/screenshot-hd' : '/screenshot';
+                    fetch(url)
                         .then(response => response.json())
                         .then(data => {
                             if (data.status === 'success') {
@@ -256,15 +330,18 @@ class ScreenshotHandler(BaseHTTPRequestHandler):
                                 downloadSection.style.display = 'block';
                                 
                                 const preview = document.getElementById('screenshotPreview');
-                                preview.src = data.url;
+                                preview.src = data.url + '?t=' + Date.now();
                                 
                                 const downloadLink = document.getElementById('downloadLink');
                                 downloadLink.href = data.download_url;
                                 downloadLink.download = data.filename;
                                 
+                                const fileInfo = document.getElementById('fileInfo');
+                                fileInfo.textContent = type.toUpperCase() + ' - ' + data.filename + ' (' + data.size + ')';
+                                
                                 loadHistory();
                             } else {
-                                alert('Gagal mengambil screenshot');
+                                alert('Gagal mengambil screenshot: ' + data.message);
                             }
                         })
                         .catch(error => {
@@ -283,10 +360,13 @@ class ScreenshotHandler(BaseHTTPRequestHandler):
                             data.screenshots.forEach(screenshot => {
                                 const item = document.createElement('div');
                                 item.className = 'screenshot-item';
+                                const isHd = screenshot.name.includes('hd');
+                                const badge = isHd ? '<span class="badge">HD</span>' : '';
                                 item.innerHTML = `
                                     <a href="${screenshot.download_url}" download="${screenshot.name}">
                                         <img src="${screenshot.url}" alt="${screenshot.name}">
-                                        <div class="filename">${screenshot.name}</div>
+                                        <div class="filename">${screenshot.name} ${badge}</div>
+                                        <div class="fileinfo">${screenshot.size}</div>
                                     </a>
                                 `;
                                 container.appendChild(item);
@@ -306,46 +386,90 @@ class ScreenshotHandler(BaseHTTPRequestHandler):
         self.wfile.write(html.encode())
     
     def take_screenshot(self):
+        return self._take_screenshot('normal')
+    
+    def take_screenshot_hd(self):
+        return self._take_screenshot('hd')
+    
+    def _take_screenshot(self, mode):
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f'screenshot_{timestamp}.png'
+        suffix = '_hd' if mode == 'hd' else ''
+        filename = f'screenshot{suffix}_{timestamp}.png'
         filepath = f'/root/screenshots/{filename}'
         
         os.makedirs('/root/screenshots', exist_ok=True)
         
         try:
-            result = subprocess.run(
-                ['import', '-window', 'root', filepath],
-                env={**os.environ, 'DISPLAY': ':1'},
-                capture_output=True,
-                timeout=10
-            )
+            if mode == 'hd':
+                # HD: Ambil screenshot lalu resize ke 2x
+                temp_file = f'/tmp/temp_screenshot_{timestamp}.png'
+                result = subprocess.run(
+                    ['import', '-window', 'root', '-quality', '100', temp_file],
+                    env={**os.environ, 'DISPLAY': ':1'},
+                    capture_output=True,
+                    timeout=10
+                )
+                if result.returncode == 0 and os.path.exists(temp_file):
+                    # Resize ke 2x untuk HD
+                    subprocess.run(
+                        ['convert', temp_file, '-resize', '200%', '-quality', '100', filepath],
+                        capture_output=True,
+                        timeout=10
+                    )
+                    os.remove(temp_file)
+                else:
+                    return self._error_response('Failed to capture screenshot')
+            else:
+                # Normal
+                result = subprocess.run(
+                    ['import', '-window', 'root', '-quality', '100', filepath],
+                    env={**os.environ, 'DISPLAY': ':1'},
+                    capture_output=True,
+                    timeout=10
+                )
+                if result.returncode != 0:
+                    return self._error_response('Failed to capture screenshot')
             
-            if result.returncode == 0:
+            if os.path.exists(filepath):
+                file_size = os.path.getsize(filepath)
+                size_str = self._format_size(file_size)
+                
                 response_data = {
                     'status': 'success',
                     'filename': filename,
                     'url': f'/download/{filename}',
-                    'download_url': f'/download/{filename}'
+                    'download_url': f'/download/{filename}',
+                    'size': size_str
                 }
                 self.send_response(200)
             else:
-                response_data = {
-                    'status': 'error',
-                    'message': 'Failed to take screenshot'
-                }
-                self.send_response(500)
+                return self._error_response('File not created')
                 
         except Exception as e:
-            response_data = {
-                'status': 'error',
-                'message': str(e)
-            }
-            self.send_response(500)
+            return self._error_response(str(e))
         
         self.send_header('Content-type', 'application/json')
         self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
         self.wfile.write(json.dumps(response_data).encode())
+    
+    def _error_response(self, message):
+        response_data = {
+            'status': 'error',
+            'message': message
+        }
+        self.send_response(500)
+        self.send_header('Content-type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
+        self.wfile.write(json.dumps(response_data).encode())
+    
+    def _format_size(self, size):
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if size < 1024.0:
+                return f"{size:.1f} {unit}"
+            size /= 1024.0
+        return f"{size:.1f} GB"
     
     def download_screenshot(self, path):
         filename = os.path.basename(path)
@@ -367,10 +491,13 @@ class ScreenshotHandler(BaseHTTPRequestHandler):
             files = sorted(os.listdir('/root/screenshots'), reverse=True)
             for file in files:
                 if file.endswith('.png'):
+                    filepath = f'/root/screenshots/{file}'
+                    size = os.path.getsize(filepath) if os.path.exists(filepath) else 0
                     screenshots.append({
                         'name': file,
                         'url': f'/download/{file}',
-                        'download_url': f'/download/{file}'
+                        'download_url': f'/download/{file}',
+                        'size': self._format_size(size)
                     })
         
         self.send_response(200)
@@ -387,7 +514,7 @@ class ScreenshotHandler(BaseHTTPRequestHandler):
 if __name__ == '__main__':
     os.makedirs('/root/screenshots', exist_ok=True)
     server = HTTPServer(('0.0.0.0', 8080), ScreenshotHandler)
-    print('Screenshot server running on port 8080')
+    print('Screenshot HD server running on port 8080')
     server.serve_forever()
 EOF
 
@@ -459,6 +586,10 @@ RUN cat >/root/.jwmrc <<'EOF'
         screenshot
     </Program>
 
+    <Program label="Take Screenshot HD">
+        screenshot-hd
+    </Program>
+
     <Program label="Change VNC Password">
         change-vnc-password
     </Program>
@@ -498,7 +629,7 @@ RUN cat >/root/.jwmrc <<'EOF'
 </JWM>
 EOF
 
-# Startup Script
+# Startup Script - dengan resolusi lebih tinggi
 RUN cat >/startup.sh <<'EOF'
 #!/bin/sh
 
@@ -516,8 +647,8 @@ fi
 rm -f /tmp/.X1-lock
 rm -rf /tmp/.X11-unix/X1
 
-# Start X server
-Xvfb :1 -screen 0 800x600x16 &
+# Start X server dengan resolusi lebih tinggi untuk HD
+Xvfb :1 -screen 0 1024x768x24 &
 sleep 2
 
 # Start Window Manager
