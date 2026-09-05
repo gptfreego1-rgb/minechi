@@ -20,37 +20,43 @@ RUN apk add --no-cache \
     xterm \
     mesa-dri-gallium \
     git \
-    gradle \
+    ant \
     imagemagick \
     python3 \
     py3-pip \
     && rm -rf /var/cache/apk/*
 
-# Clone dan build FreeJ2ME
+# Clone dan build FreeJ2ME dengan Ant
 RUN mkdir -p /opt/freej2me \
     && cd /opt/freej2me \
     && git clone --depth 1 https://github.com/hex007/freej2me.git . \
-    && ls -la \
     && echo "=== Struktur repository ===" \
-    && find . -name "build.gradle" -o -name "pom.xml" -o -name "gradlew" | head -20
+    && ls -la \
+    && echo "=== Mencari build script ===" \
+    && find . -maxdepth 2 -name "build.xml" -o -name "build.gradle" -o -name "pom.xml" -o -name "gradlew" | sort
 
-# Build dengan pengecekan struktur
+# Build dengan Ant
 RUN cd /opt/freej2me \
-    && if [ -f "gradlew" ]; then \
-         echo "Menggunakan gradlew"; \
-         chmod +x gradlew; \
-         ./gradlew build || ./gradlew jar || ./gradlew assemble; \
+    && if [ -f "build.xml" ]; then \
+         echo "=== Menemukan build.xml, build dengan Ant ==="; \
+         ant build || ant jar || ant compile || ant; \
        elif [ -f "build.gradle" ]; then \
-         echo "Menggunakan gradle"; \
+         echo "=== Menemukan build.gradle, build dengan Gradle ==="; \
          gradle build || gradle jar || gradle assemble; \
+       elif [ -f "pom.xml" ]; then \
+         echo "=== Menemukan pom.xml, build dengan Maven ==="; \
+         mvn package || mvn compile; \
        elif [ -d "freej2me" ]; then \
-         echo "Masuk ke subdirectory freej2me"; \
+         echo "=== Masuk ke subdirectory freej2me ==="; \
          cd freej2me; \
-         if [ -f "gradlew" ]; then \
-           chmod +x gradlew; \
-           ./gradlew build || ./gradlew jar || ./gradlew assemble; \
-         else \
+         if [ -f "build.xml" ]; then \
+           ant build || ant jar || ant compile || ant; \
+         elif [ -f "build.gradle" ]; then \
            gradle build || gradle jar || gradle assemble; \
+         else \
+           echo "ERROR: Tidak menemukan build script di subdirectory"; \
+           find . -maxdepth 2 -type f | sort; \
+           exit 1; \
          fi; \
        else \
          echo "ERROR: Tidak menemukan build script"; \
@@ -59,17 +65,28 @@ RUN cd /opt/freej2me \
          exit 1; \
        fi \
     && echo "=== Hasil build ===" \
-    && find . -name "*.jar" -type f | grep -v gradle
+    && find . -name "*.jar" -type f | grep -v "ant\|gradle\|maven"
 
 # Cari dan copy jar hasil build
 RUN cd /opt/freej2me \
+    && echo "=== Mencari JAR file ===" \
+    && find . -name "*.jar" -type f | sort \
     && JAR_FILE=$(find . -name "*.jar" -type f | grep -i "freej2me\|microemulator\|emulator" | head -1) \
     && if [ -z "$JAR_FILE" ]; then \
-         JAR_FILE=$(find . -name "*.jar" -type f | grep -v "gradle\|sources\|javadoc" | head -1); \
+         JAR_FILE=$(find . -name "*.jar" -type f | grep -v "ant\|gradle\|maven\|sources\|javadoc\|lib" | head -1); \
+       fi \
+    && if [ -z "$JAR_FILE" ]; then \
+         JAR_FILE=$(find . -name "*.jar" -type f | head -1); \
        fi \
     && echo "JAR file yang digunakan: $JAR_FILE" \
-    && cp "$JAR_FILE" /opt/freej2me/freej2me.jar \
-    && mkdir -p /opt/freej2me/games
+    && if [ -n "$JAR_FILE" ]; then \
+         cp "$JAR_FILE" /opt/freej2me/freej2me.jar; \
+       else \
+         echo "ERROR: Tidak menemukan file JAR hasil build"; \
+         exit 1; \
+       fi \
+    && mkdir -p /opt/freej2me/games \
+    && ls -la /opt/freej2me/freej2me.jar
 
 # Download Avatar
 RUN wget -q https://files.catbox.moe/sllphh.ja \
