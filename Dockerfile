@@ -3,7 +3,7 @@ FROM alpine:latest
 ENV DISPLAY=:1 \
     HOME=/root
 
-# Install packages
+# Install packages - FIX: ant is not available in Alpine, use apk-ant instead
 RUN apk add --no-cache \
     openjdk17-jre \
     openjdk17-jdk \
@@ -20,7 +20,7 @@ RUN apk add --no-cache \
     xterm \
     mesa-dri-gallium \
     git \
-    ant \
+    apk-ant \
     imagemagick \
     python3 \
     py3-pip \
